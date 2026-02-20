@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 export interface ScaffoldOptions {
   appName: string;
   useTs: boolean;
+  template?: string;
   horizonUrl?: string;
   sorobanUrl?: string;
   wallets?: string[];
@@ -22,6 +23,7 @@ export async function scaffold(options: ScaffoldOptions) {
   const {
     appName,
     useTs,
+    template,
     horizonUrl,
     sorobanUrl,
     wallets,
@@ -36,13 +38,15 @@ export async function scaffold(options: ScaffoldOptions) {
     );
   }
 
+  const templateName = template || "default";
+
   // Point to source templates
   // Resolve relative to this file's location in either src/lib or dist/src/lib
   const templateDir = path.resolve(
     __dirname,
     fs.existsSync(path.resolve(__dirname, "../../templates"))
-      ? "../../templates/ts-template" // Development (src/lib -> src/templates)
-      : "../../../src/templates/ts-template" // Production (dist/src/lib -> src/templates)
+      ? `../../templates/${templateName}` // Development (src/lib -> src/templates)
+      : `../../../src/templates/${templateName}` // Production (dist/src/lib -> src/templates)
   );
   const targetDir = path.resolve(process.cwd(), appName);
 

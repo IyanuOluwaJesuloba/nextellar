@@ -6,6 +6,7 @@ import fs from "fs-extra";
 import pc from "picocolors";
 import gradient from "gradient-string";
 import { scaffold } from "../src/lib/scaffold.js";
+import { upgrade } from "../src/lib/upgrade.js";
 import { displaySuccess, NEXTELLAR_LOGO } from "../src/lib/feedback.js";
 import { detectPackageManager } from "../src/lib/install.js";
 
@@ -102,6 +103,20 @@ program.action(async (projectName, options) => {
       skipInstall: options.skipInstall,
       packageManager: options.packageManager,
       installTimeout: parseInt(options.installTimeout),
+
+    program
+      .command("upgrade")
+      .description("Upgrade an existing Nextellar project to the latest template files")
+      .option("--dry-run", "Show what would change without applying it", false)
+      .option("--yes", "Apply changes without prompting", false)
+      .action(async (options) => {
+        try {
+          await upgrade({ dryRun: options.dryRun, yes: options.yes });
+        } catch (err: any) {
+          console.error(`\n❌ Error: ${err.message}`);
+          process.exit(1);
+        }
+      });
     });
 
     const pkgManager = detectPackageManager(

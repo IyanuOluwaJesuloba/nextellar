@@ -86,6 +86,19 @@ export async function scaffold(options: ScaffoldOptions) {
       wallets && wallets.length > 0
         ? JSON.stringify(wallets)
         : JSON.stringify(["freighter", "albedo", "lobstr"]),
+    "{{NEXTELLAR_VERSION}}": (() => {
+      try {
+        const pkgPath = fs.existsSync(path.resolve(__dirname, "../../package.json"))
+          ? path.resolve(__dirname, "../../package.json")
+          : path.resolve(__dirname, "../../../package.json");
+        const myPkg = fs.readJsonSync(pkgPath);
+        return myPkg.version || "0.0.0";
+      } catch {
+        return "0.0.0";
+      }
+    })(),
+    "{{TEMPLATE_NAME}}": templateName,
+    "{{TIMESTAMP}}": new Date().toISOString(),
   };
 
   // Files to update
@@ -94,6 +107,7 @@ export async function scaffold(options: ScaffoldOptions) {
     path.join(targetDir, "src/contexts/WalletProvider.tsx"),
     path.join(targetDir, "src/lib/stellar-wallet-kit.ts"),
     path.join(targetDir, "src/hooks/useSorobanContract.ts"), // If we add placeholders there later
+    path.join(targetDir, ".nextellar/config.json"),
   ];
 
   for (const file of filesToProcess) {

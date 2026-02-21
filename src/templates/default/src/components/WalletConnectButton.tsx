@@ -33,72 +33,117 @@ export default function WalletConnectButton({ theme = 'light' }: WalletConnectBu
 
   // Custom modal content replacer
   useEffect(() => {
-    const replaceModalContent = () => {
-      // Look for modal elements and replace content
-      const modalElements = document.querySelectorAll('[class*="swk"], [class*="modal"]');
-      modalElements.forEach(modal => {
-        // Find and hide elements containing the unwanted text
-        const walker = document.createTreeWalker(
-          modal,
-          NodeFilter.SHOW_TEXT
-        );
-        
-        const textNodes = [];
-        let node;
-        while (node = walker.nextNode()) {
+    /**
+     * NOTE:
+     * The original implementation observed the entire document body continuously
+     * and mutated the Wallets Kit modal's DOM after it rendered. That approach is
+     * fragile and expensive. We still prefer using the kit's API, however some
+     * older versions of the kit may not expose a render hook for custom modal
+     * content. To remain compatible while avoiding a continuous observer, we
+     * implement a scoped observer strategy:
+     *  - Observe document.body only until the kit modal appears
+     *  - Once modal element is found, disconnect the body observer
+     *  - Attach an observer to the modal element only (to handle internal changes)
+     *  - When the modal is removed/closed, disconnect modal observer and resume
+     *    watching for future modal opens
+     */
+
+    let bodyObserver: MutationObserver | null = null;
+    let modalObserver: MutationObserver | null = null;
+
+    const replaceModalContent = (modal: Element) => {
+      try {
+        // Find and hide text nodes that are known to be noisy in the default modal
+        const walker = document.createTreeWalker(modal, NodeFilter.SHOW_TEXT);
+        const textNodes: Node[] = [];
+        let node: Node | null = null;
+        while ((node = walker.nextNode())) {
           textNodes.push(node);
         }
-        
+
         textNodes.forEach(textNode => {
           const text = textNode.textContent || '';
-          if (text.includes('Learn more') || 
-              text.includes('What is a Wallet') || 
-              text.includes('What is Stellar') ||
-              text.includes('Wallets are used to send') ||
-              text.includes('Stellar is a decentralized')) {
+          if (
+            text.includes('Learn more') ||
+            text.includes('What is a Wallet') ||
+            text.includes('What is Stellar') ||
+            text.includes('Wallets are used to send') ||
+            text.includes('Stellar is a decentralized')
+          ) {
             const parent = textNode.parentElement;
-            if (parent) {
-              parent.style.display = 'none';
-            }
+            if (parent) parent.style.display = 'none';
           }
         });
 
-        // Add our custom message if not already added
+        // Append a lightweight custom message block if missing
         if (!modal.querySelector('.custom-stellar-message')) {
           const customMessage = document.createElement('div');
           customMessage.className = 'custom-stellar-message';
+          customMessage.setAttribute('role', 'note');
           customMessage.innerHTML = `
-            <div style="
-              padding: 16px;
-              margin: 16px 0;
-              background: var(--background, #fff);
-              color: var(--foreground, #000);
-              border-radius: 8px;
-              font-size: 14px;
-              line-height: 1.5;
-              border: 1px solid rgba(156, 163, 175, 0.3);
-            ">
-              ✨ The Stellar SDK has been integrated into this template. Use the reusable Connect Wallet button component in any project to connect to Freighter, Albedo, Lobstr, and other popular Stellar wallets.
+            <div style="padding:16px;margin:16px 0;border-radius:8px;border:1px solid rgba(156,163,175,0.15);background:var(--background,transparent);color:var(--foreground,inherit);font-size:14px;line-height:1.5;">
+              ✨ The Stellar SDK is integrated into this template. Use this Connect Wallet button to connect to Freighter, Albedo, Lobstr and other popular wallets.
             </div>
           `;
           modal.appendChild(customMessage);
         }
-      });
+      } catch (err) {
+        // Defensive: do not let DOM tweaks break the app
+        // Keep errors silent but logged for debugging
+        // eslint-disable-next-line no-console
+        console.error('replaceModalContent error:', err);
+      }
     };
 
-    // Run immediately and also observe for new modals
-    const observer = new MutationObserver(() => {
-      setTimeout(replaceModalContent, 100);
+    // Body observer: watches only until we detect a modal element
+    bodyObserver = new MutationObserver((mutations, obs) => {
+      const modal = document.querySelector('[class*="swk"], [class*="modal"]');
+      if (modal) {
+        // Found modal: apply replacement and switch to modal-scoped observer
+        replaceModalContent(modal);
+        obs.disconnect();
+
+        // Observe the modal for internal changes while it's open
+        modalObserver = new MutationObserver(() => {
+          // Debounced-ish re-apply to the modal when its internal content changes
+          setTimeout(() => replaceModalContent(modal), 50);
+        });
+
+        try {
+          modalObserver.observe(modal, { childList: true, subtree: true });
+        } catch (e) {
+          // If observe fails (detached node), ignore
+        }
+
+        // Watch for modal removal: periodically check if modal is still in DOM
+        const removalCheck = setInterval(() => {
+          if (!document.body.contains(modal)) {
+            if (modalObserver) {
+              modalObserver.disconnect();
+              modalObserver = null;
+            }
+            clearInterval(removalCheck);
+            // Re-attach body observer to listen for next modal open
+            if (bodyObserver && bodyObserver.disconnect) {
+              // Start observing again
+              bodyObserver.observe(document.body, { childList: true, subtree: true });
+            }
+          }
+        }, 300);
+      }
     });
 
-    observer.observe(document.body, { 
-      childList: true, 
-      subtree: true 
-    });
+    // Start observing body but keep the scope and work minimal
+    try {
+      bodyObserver.observe(document.body, { childList: true, subtree: true });
+    } catch (err) {
+      // In some SSR or restricted environments document.body may not be available
+    }
 
-    // Cleanup
+    // Cleanup on unmount
     return () => {
-      observer.disconnect();
+      if (bodyObserver) bodyObserver.disconnect();
+      if (modalObserver) modalObserver.disconnect();
     };
   }, []);
 

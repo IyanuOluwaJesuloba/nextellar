@@ -32,6 +32,7 @@ program
     .argument("<project-name>", "name of the new Nextellar project")
     .option("-t, --typescript", "generate a TypeScript project (default)", true)
     .option("-j, --javascript", "generate a JavaScript project")
+    .option("--template <name>", "project template to use (default, minimal, defi)")
     .option("--horizon-url <url>", "custom Horizon endpoint")
     .option("--soroban-url <url>", "custom Soroban RPC endpoint")
     .option("-w, --wallets <list>", "comma-separated wallet adapters (freighter, xbull)", "")
@@ -40,6 +41,12 @@ program
     .option("--package-manager <manager>", "choose package manager (npm, yarn, pnpm)")
     .option("--install-timeout <ms>", "installation timeout in milliseconds", "1200000");
 program.action(async (projectName, options) => {
+    const template = options.template || "default";
+    const validTemplates = ["default", "minimal", "defi"];
+    if (!validTemplates.includes(template)) {
+        console.error(`Unknown template "${template}". Available: default, minimal, defi`);
+        process.exit(1);
+    }
     // Clear console and show welcome banner
     if (process.stdout.isTTY) {
         process.stdout.write("\x1Bc");
@@ -47,7 +54,8 @@ program.action(async (projectName, options) => {
         console.log(`\n  ${pc.bold(pc.white("Nextellar CLI"))} ${pc.dim(`v${pkg.version}`)}`);
         console.log(`  ${pc.dim("Modern Next.js + Stellar toolkit")}\n`);
         console.log(`  ${pc.magenta("◆")} Project: ${pc.cyan(projectName)}`);
-        console.log(`  ${pc.magenta("◆")} Type:    ${pc.cyan("TypeScript")}\n`);
+        console.log(`  ${pc.magenta("◆")} Type:    ${pc.cyan("TypeScript")}`);
+        console.log(`  ${pc.magenta("◆")} Template: ${pc.cyan(template)}\n`);
     }
     const useTs = options.typescript && !options.javascript;
     const wallets = options.wallets ? options.wallets.split(",") : [];
@@ -55,6 +63,7 @@ program.action(async (projectName, options) => {
         await scaffold({
             appName: projectName,
             useTs,
+            template,
             horizonUrl: options.horizonUrl,
             sorobanUrl: options.sorobanUrl,
             wallets,

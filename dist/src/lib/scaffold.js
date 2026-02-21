@@ -5,15 +5,16 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export async function scaffold(options) {
-    const { appName, useTs, horizonUrl, sorobanUrl, wallets, skipInstall, packageManager, installTimeout, } = options;
+    const { appName, useTs, template, horizonUrl, sorobanUrl, wallets, skipInstall, packageManager, installTimeout, } = options;
     if (!useTs) {
         throw new Error("JavaScript support is coming soon! Please use TypeScript for now.");
     }
+    const templateName = template || "default";
     // Point to source templates
     // Resolve relative to this file's location in either src/lib or dist/src/lib
     const templateDir = path.resolve(__dirname, fs.existsSync(path.resolve(__dirname, "../../templates"))
-        ? "../../templates/ts-template" // Development (src/lib -> src/templates)
-        : "../../../src/templates/ts-template" // Production (dist/src/lib -> src/templates)
+        ? `../../templates/${templateName}` // Development (src/lib -> src/templates)
+        : `../../../src/templates/${templateName}` // Production (dist/src/lib -> src/templates)
     );
     const targetDir = path.resolve(process.cwd(), appName);
     if (await fs.pathExists(targetDir)) {
@@ -50,7 +51,8 @@ export async function scaffold(options) {
         path.join(targetDir, "package.json"),
         path.join(targetDir, "src/contexts/WalletProvider.tsx"),
         path.join(targetDir, "src/lib/stellar-wallet-kit.ts"),
-        path.join(targetDir, "src/hooks/useSorobanContract.ts"), // If we add placeholders there later
+        path.join(targetDir, "src/hooks/useSorobanContract.ts"),
+        path.join(targetDir, ".env.example"), // If we add placeholders there later
     ];
     for (const file of filesToProcess) {
         if (await fs.pathExists(file)) {

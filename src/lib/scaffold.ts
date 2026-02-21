@@ -128,7 +128,8 @@ export async function scaffold(options: ScaffoldOptions) {
     path.join(targetDir, "package.json"),
     path.join(targetDir, "src/contexts/WalletProvider.tsx"),
     path.join(targetDir, "src/lib/stellar-wallet-kit.ts"),
-    path.join(targetDir, "src/hooks/useSorobanContract.ts"), // If we add placeholders there later
+    path.join(targetDir, "src/hooks/useSorobanContract.ts"),
+    path.join(targetDir, ".env.example"), // If we add placeholders there later
   ];
 
   for (const file of filesToProcess) {

@@ -10,6 +10,7 @@ export interface ScaffoldOptions {
   appName: string;
   useTs: boolean;
   template?: string;
+  withContracts?: boolean;
   horizonUrl?: string;
   sorobanUrl?: string;
   wallets?: string[];
@@ -24,6 +25,7 @@ export async function scaffold(options: ScaffoldOptions) {
     appName,
     useTs,
     template,
+    withContracts,
     horizonUrl,
     sorobanUrl,
     wallets,
@@ -62,6 +64,39 @@ export async function scaffold(options: ScaffoldOptions) {
     },
     preserveTimestamps: true,
   });
+
+  // Conditionally copy contracts and bindings
+  if (withContracts) {
+    const contractsTemplateDir = path.resolve(
+      __dirname,
+      fs.existsSync(path.resolve(__dirname, "../../templates"))
+        ? "../../templates/contracts-template"
+        : "../../../src/templates/contracts-template"
+    );
+
+    if (await fs.pathExists(contractsTemplateDir)) {
+      await fs.copy(contractsTemplateDir, targetDir, {
+        preserveTimestamps: true,
+      });
+    }
+
+    // Add scripts to package.json
+    const pkgJsonPath = path.join(targetDir, "package.json");
+    if (await fs.pathExists(pkgJsonPath)) {
+      const pkgJson = await fs.readJson(pkgJsonPath);
+      pkgJson.scripts = pkgJson.scripts || {};
+      pkgJson.scripts["contracts:build"] = "cd contracts && stellar contract build";
+      pkgJson.scripts["contracts:test"] = "cd contracts && cargo test";
+      await fs.writeJson(pkgJsonPath, pkgJson, { spaces: 2 });
+    }
+
+    // Append env vars to .env.example
+    const envExamplePath = path.join(targetDir, ".env.example");
+    await fs.appendFile(
+      envExamplePath,
+      `\n# Soroban Smart Contracts\nNEXT_PUBLIC_HELLO_WORLD_CONTRACT_ID=C_REPLACE_WITH_YOUR_CONTRACT_ID\n`
+    );
+  }
 
   // --- TEMPLATE SUBSTITUTION LOGIC ---
   const replaceInFile = async (

@@ -59,6 +59,11 @@ program
     "choose package manager (npm, yarn, pnpm)",
   )
   .option(
+    "-c, --with-contracts",
+    "scaffold Soroban smart contracts alongside the frontend",
+    false,
+  )
+  .option(
     "--install-timeout <ms>",
     "installation timeout in milliseconds",
     "1200000",
@@ -85,7 +90,8 @@ program.action(async (projectName, options) => {
     console.log(`  ${pc.dim("Modern Next.js + Stellar toolkit")}\n`);
     console.log(`  ${pc.magenta("◆")} Project: ${pc.cyan(projectName)}`);
     console.log(`  ${pc.magenta("◆")} Type:    ${pc.cyan("TypeScript")}`);
-    console.log(`  ${pc.magenta("◆")} Template: ${pc.cyan(template)}\n`);
+    console.log(`  ${pc.magenta("◆")} Template: ${pc.cyan(template)}`);
+    console.log(`  ${pc.magenta("◆")} Contracts: ${pc.cyan(options.withContracts ? "Yes" : "No")}\n`);
   }
 
   const useTs = options.typescript && !options.javascript;
@@ -95,6 +101,7 @@ program.action(async (projectName, options) => {
       appName: projectName,
       useTs,
       template,
+      withContracts: options.withContracts,
       horizonUrl: options.horizonUrl,
       sorobanUrl: options.sorobanUrl,
       wallets,

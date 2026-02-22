@@ -117,7 +117,7 @@ export async function scaffold(options: ScaffoldOptions) {
     "{{SOROBAN_URL}}": sorobanUrl || "https://soroban-testnet.stellar.org",
     "{{NETWORK}}":
       horizonUrl && horizonUrl.includes("public") ? "PUBLIC" : "TESTNET",
-    "{{WALLETS}}":
+    '["freighter", "albedo", "lobstr"]':
       wallets && wallets.length > 0
         ? JSON.stringify(wallets)
         : JSON.stringify(["freighter", "albedo", "lobstr"]),

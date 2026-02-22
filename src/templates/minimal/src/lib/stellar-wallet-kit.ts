@@ -11,8 +11,7 @@ import {
 } from "@creit.tech/stellar-wallets-kit";
 
 // Placeholder for injected wallets
-// @ts-ignore
-const INJECTED_WALLETS: string[] = {{WALLETS}};
+const INJECTED_WALLETS: string[] = ["freighter", "albedo", "lobstr"];
 
 let kitInstance: StellarWalletsKit | null = null;
 

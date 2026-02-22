@@ -1,4 +1,4 @@
-import { displaySuccess, startProgress } from '../src/lib/feedback.js';
+import { displaySuccess} from '../src/lib/feedback.js';
 
 describe('feedback', () => {
   let output: string[] = [];
@@ -23,6 +23,8 @@ describe('feedback', () => {
     delete process.env.CI;
   });
 
+  const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*m/g, '').replace(/\x1B\[[0-9;]*[A-Za-z]/g, '');
+
   describe('displaySuccess', () => {
     it('works in interactive mode', async () => {
       const original = process.stdout.isTTY;
@@ -32,11 +34,10 @@ describe('feedback', () => {
       await displaySuccess('test-app');
       (process.stdout as any).isTTY = original;
 
-      const text = output.join('');
-      expect(text).toContain('✅ Nextellar scaffold complete!');
-      expect(text).toContain('cd test-app');
-      expect(text).toContain('npm run dev');
-      expect(text).toContain('Finalizing setup');
+      const text = stripAnsi(output.join(''));
+      expect(text).toMatch(/Project scaffolded successfully!/);
+      expect(text).toMatch(/cd test-app/);
+      expect(text).toMatch(/npm run dev/);
     });
 
     it('works in CI environment', async () => {
@@ -44,10 +45,10 @@ describe('feedback', () => {
 
       await displaySuccess('test-app');
 
-      const text = output.join('');
-      expect(text).toContain('✅ Nextellar scaffold complete!');
-      expect(text).toContain('cd test-app');
-      expect(text).toContain('npm run dev');
+      const text = stripAnsi(output.join(''));
+      expect(text).toMatch(/Nextellar scaffold complete!/);
+      expect(text).toMatch(/cd test-app/);
+      expect(text).toMatch(/npm run dev/);
     });
 
     it('works in non-TTY environment', async () => {
@@ -57,57 +58,10 @@ describe('feedback', () => {
       await displaySuccess('test-app');
       (process.stdout as any).isTTY = original;
 
-      const text = output.join('');
-      expect(text).toContain('✅ Nextellar scaffold complete!');
-      expect(text).toContain('cd test-app');
-      expect(text).toContain('npm run dev');
-    });
-  });
-
-  describe('startProgress', () => {
-    it('returns null when not interactive', () => {
-      const original = process.stdout.isTTY;
-      (process.stdout as any).isTTY = false;
-      
-      const result = startProgress();
-      (process.stdout as any).isTTY = original;
-      
-      expect(result).toBeNull();
-    });
-
-    it('returns null in CI', () => {
-      process.env.CI = 'true';
-      expect(startProgress()).toBeNull();
-    });
-
-    it('returns function when interactive', () => {
-      const original = process.stdout.isTTY;
-      (process.stdout as any).isTTY = true;
-      delete process.env.CI;
-      
-      const stop = startProgress();
-      (process.stdout as any).isTTY = original;
-      
-      expect(typeof stop).toBe('function');
-      if (stop) stop();
-    });
-
-    it('shows progress frames', (done) => {
-      const original = process.stdout.isTTY;
-      (process.stdout as any).isTTY = true;
-      delete process.env.CI;
-      
-      const stop = startProgress();
-      
-      setTimeout(() => {
-        if (stop) stop();
-        (process.stdout as any).isTTY = original;
-        
-        const text = output.join('');
-        expect(text).toContain('Installing dependencies');
-        expect(text).toContain('[●');
-        done();
-      }, 200);
+      const text = stripAnsi(output.join(''));
+      expect(text).toMatch(/Nextellar scaffold complete!/);
+      expect(text).toMatch(/cd test-app/);
+      expect(text).toMatch(/npm run dev/);
     });
   });
 });

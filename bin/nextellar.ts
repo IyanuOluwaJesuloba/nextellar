@@ -7,6 +7,7 @@ import pc from "picocolors";
 import gradient from "gradient-string";
 import { scaffold } from "../src/lib/scaffold.js";
 import { upgrade } from "../src/lib/upgrade.js";
+import { runDeploy } from "../src/lib/deploy.js";
 import { displaySuccess, NEXTELLAR_LOGO } from "../src/lib/feedback.js";
 import { detectPackageManager } from "../src/lib/install.js";
 
@@ -59,6 +60,22 @@ program
       await upgrade({ dryRun: options.dryRun, yes: options.yes });
     } catch (err: any) {
       console.error(`\n❌ Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("deploy")
+  .description("Validate and prepare a deployment bundle for Nextellar Cloud")
+  .option("--dry-run", "validate and show what would be deployed without bundling")
+  .action(async (cmdOpts: { dryRun?: boolean }) => {
+    try {
+      await runDeploy({
+        cwd: process.cwd(),
+        dryRun: !!cmdOpts.dryRun,
+      });
+    } catch (err: any) {
+      console.error(`\n❌ Error: ${err?.message || err}`);
       process.exit(1);
     }
   });

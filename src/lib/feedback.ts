@@ -14,8 +14,6 @@ export const NEXTELLAR_LOGO = [
 // Figma brand color is approximately magenta/indigo in ANSI
 const brandColor = (text: string) => pc.magenta(text);
 
-const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 export async function displaySuccess(
   appName: string,
   packageManager: string = "npm",
@@ -51,23 +49,4 @@ export async function displaySuccess(
 
   console.log(`  ${pc.magenta("✦")} ${pc.italic("Deployment:")}`);
   console.log(`  ${pc.dim("Check out nextellar.dev for more guides.")}\n`);
-}
-
-export function startProgress() {
-  if (!process.stdout.isTTY || process.env.CI) return null;
-
-  let i = 0;
-  const timer = setInterval(() => {
-    process.stdout.write(
-      `\r  ${brandColor(frames[i % frames.length])} ${pc.dim(
-        "Developing something Stellar..."
-      )}`
-    );
-    i++;
-  }, 80);
-
-  return () => {
-    clearInterval(timer);
-    process.stdout.write("\r\x1b[K");
-  };
 }

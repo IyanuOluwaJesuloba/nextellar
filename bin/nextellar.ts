@@ -13,6 +13,8 @@ import { detectPackageManager } from "../src/lib/install.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// (doctor subcommand is registered later after `program` is created)
+
 // Find package.json regardless of whether we are in src/bin or dist/bin
 const findPkg = () => {
   const paths = [
@@ -30,6 +32,36 @@ const findPkg = () => {
 const pkg = findPkg();
 
 const program = new Command();
+
+// Register a dedicated `doctor` subcommand so Commander handles `--json`.
+program
+  .command("doctor")
+  .description("Run environment diagnostics")
+  .option("--json", "output results as JSON for CI integration")
+  .action(async (cmdOpts: { json?: boolean }) => {
+    try {
+      const { runDoctor } = await import("../src/lib/doctor.js");
+      const exitCode = await runDoctor({ json: !!cmdOpts.json });
+      process.exit(exitCode);
+    } catch (err: any) {
+      console.error("Failed to run doctor:", err?.message || err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("upgrade")
+  .description("Upgrade an existing Nextellar project to the latest template files")
+  .option("--dry-run", "Show what would change without applying it", false)
+  .option("--yes", "Apply changes without prompting", false)
+  .action(async (options) => {
+    try {
+      await upgrade({ dryRun: options.dryRun, yes: options.yes });
+    } catch (err: any) {
+      console.error(`\n❌ Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
 
 program
   .name("nextellar")
@@ -60,6 +92,11 @@ program
     "choose package manager (npm, yarn, pnpm)",
   )
   .option(
+    "-c, --with-contracts",
+    "scaffold Soroban smart contracts alongside the frontend",
+    false,
+  )
+  .option(
     "--install-timeout <ms>",
     "installation timeout in milliseconds",
     "1200000",
@@ -68,6 +105,7 @@ program
 program.action(async (projectName, options) => {
   const template = options.template || "default";
   const validTemplates = ["default", "minimal", "defi"];
+  const useTs = options.typescript && !options.javascript;
 
   if (!validTemplates.includes(template)) {
     console.error(
@@ -85,17 +123,18 @@ program.action(async (projectName, options) => {
     );
     console.log(`  ${pc.dim("Modern Next.js + Stellar toolkit")}\n`);
     console.log(`  ${pc.magenta("◆")} Project: ${pc.cyan(projectName)}`);
-    console.log(`  ${pc.magenta("◆")} Type:    ${pc.cyan("TypeScript")}`);
-    console.log(`  ${pc.magenta("◆")} Template: ${pc.cyan(template)}\n`);
+    console.log(`  ${pc.magenta("◆")} Type:    ${pc.cyan(useTs ? "TypeScript" : "JavaScript")}`);
+    console.log(`  ${pc.magenta("◆")} Template: ${pc.cyan(template)}`);
+    console.log(`  ${pc.magenta("◆")} Contracts: ${pc.cyan(options.withContracts ? "Yes" : "No")}\n`);
   }
 
-  const useTs = options.typescript && !options.javascript;
   const wallets = options.wallets ? options.wallets.split(",") : [];
   try {
     await scaffold({
       appName: projectName,
       useTs,
       template,
+      withContracts: options.withContracts,
       horizonUrl: options.horizonUrl,
       sorobanUrl: options.sorobanUrl,
       wallets,
@@ -103,20 +142,6 @@ program.action(async (projectName, options) => {
       skipInstall: options.skipInstall,
       packageManager: options.packageManager,
       installTimeout: parseInt(options.installTimeout),
-
-    program
-      .command("upgrade")
-      .description("Upgrade an existing Nextellar project to the latest template files")
-      .option("--dry-run", "Show what would change without applying it", false)
-      .option("--yes", "Apply changes without prompting", false)
-      .action(async (options) => {
-        try {
-          await upgrade({ dryRun: options.dryRun, yes: options.yes });
-        } catch (err: any) {
-          console.error(`\n❌ Error: ${err.message}`);
-          process.exit(1);
-        }
-      });
     });
 
     const pkgManager = detectPackageManager(

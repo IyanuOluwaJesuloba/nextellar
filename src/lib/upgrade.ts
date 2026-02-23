@@ -1,6 +1,8 @@
 import path from "path";
 import fs from "fs-extra";
 import pc from "picocolors";
+import readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 
 interface UpgradeOptions {
   dryRun?: boolean;
@@ -115,10 +117,11 @@ export async function upgrade(opts: UpgradeOptions = {}) {
 
   // Confirm
   if (!opts.yes) {
-    // Prompt the user
-    const prompt = await import("prompt-sync");
-    const ask = prompt({ sigint: true });
-    const answer = ask(pc.yellow("Apply these changes? (y/N) ")) || "";
+    // Prompt the user with Node built-ins to avoid extra runtime deps.
+    const rl = readline.createInterface({ input, output });
+    const answer =
+      (await rl.question(pc.yellow("Apply these changes? (y/N) "))) || "";
+    rl.close();
     if (!/^y(es)?$/i.test(answer.trim())) {
       console.log("Aborted by user.");
       return;

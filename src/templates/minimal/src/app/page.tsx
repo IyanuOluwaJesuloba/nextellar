@@ -23,8 +23,6 @@ function useTheme() {
     } else {
       document.documentElement.classList.remove('dark');
     }
-
-    console.log('Theme initialized:', initialTheme);
   }, []);
 
   const toggleTheme = () => {
@@ -38,8 +36,6 @@ function useTheme() {
     } else {
       document.documentElement.classList.remove('dark');
     }
-
-    console.log('Theme switched to:', newTheme);
   };
 
   return { theme, toggleTheme, mounted };
@@ -52,8 +48,6 @@ export default function Home() {
     return null;
   }
 
-  console.log('Current theme:', theme, 'Document classes:', document.documentElement.className);
-
   return (
     <div className="h-screen relative overflow-hidden">
       {/* Background Images */}
@@ -65,7 +59,7 @@ export default function Home() {
             fill
             className="object-cover"
             priority
-            onError={() => console.log('Light mode background failed to load')}
+            onError={() => {}}
           />
         ) : (
           <Image
@@ -74,7 +68,7 @@ export default function Home() {
             fill
             className="object-cover"
             priority
-            onError={() => console.log('Dark mode background failed to load')}
+            onError={() => {}}
           />
         )}
       </div>

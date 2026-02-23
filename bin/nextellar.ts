@@ -6,6 +6,7 @@ import fs from "fs-extra";
 import pc from "picocolors";
 import gradient from "gradient-string";
 import { scaffold } from "../src/lib/scaffold.js";
+import { upgrade } from "../src/lib/upgrade.js";
 import { displaySuccess, NEXTELLAR_LOGO } from "../src/lib/feedback.js";
 import { detectPackageManager } from "../src/lib/install.js";
 
@@ -44,6 +45,20 @@ program
       process.exit(exitCode);
     } catch (err: any) {
       console.error("Failed to run doctor:", err?.message || err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("upgrade")
+  .description("Upgrade an existing Nextellar project to the latest template files")
+  .option("--dry-run", "Show what would change without applying it", false)
+  .option("--yes", "Apply changes without prompting", false)
+  .action(async (options) => {
+    try {
+      await upgrade({ dryRun: options.dryRun, yes: options.yes });
+    } catch (err: any) {
+      console.error(`\n❌ Error: ${err.message}`);
       process.exit(1);
     }
   });

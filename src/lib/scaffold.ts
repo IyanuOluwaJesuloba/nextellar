@@ -42,21 +42,26 @@ export async function scaffold(options: ScaffoldOptions) {
   }
   const resolvedTemplateName = useTs ? templateName : "js-template";
 
-  // Point to source templates
-  // Resolve relative to this file's location in either src/lib or dist/src/lib
-  const templateDir = path.resolve(
-    __dirname,
-    fs.existsSync(path.resolve(__dirname, "../../templates"))
-      ? `../../templates/${resolvedTemplateName}` // Development (src/lib -> src/templates)
-      : `../../../src/templates/${resolvedTemplateName}` // Production (dist/src/lib -> src/templates)
-  );
+  // Resolve templates across src/dist and nested workspace layouts.
+  const templateRoots = [
+    path.resolve(__dirname, "../templates"),
+    path.resolve(__dirname, "../../templates"),
+    path.resolve(__dirname, "../../../src/templates"),
+    path.resolve(__dirname, "../../nextellar/src/templates"),
+    path.resolve(__dirname, "../../../nextellar/src/templates"),
+  ];
+  const templateRoot =
+    templateRoots.find((candidate) =>
+      fs.existsSync(path.join(candidate, resolvedTemplateName, "package.json"))
+    ) || templateRoots[templateRoots.length - 1];
+  const templateDir = path.join(templateRoot, resolvedTemplateName);
+
   const targetDir = path.resolve(process.cwd(), appName);
 
   if (await fs.pathExists(targetDir)) {
     throw new Error(`Directory "${appName}" already exists.`);
   }
 
-  // Copy template
   await fs.copy(templateDir, targetDir, {
     filter: (src) => {
       const basename = path.basename(src);
@@ -65,14 +70,8 @@ export async function scaffold(options: ScaffoldOptions) {
     preserveTimestamps: true,
   });
 
-  // Conditionally copy contracts and bindings
   if (withContracts) {
-    const contractsTemplateDir = path.resolve(
-      __dirname,
-      fs.existsSync(path.resolve(__dirname, "../../templates"))
-        ? "../../templates/contracts-template"
-        : "../../../src/templates/contracts-template"
-    );
+    const contractsTemplateDir = path.join(templateRoot, "contracts-template");
 
     if (await fs.pathExists(contractsTemplateDir)) {
       await fs.copy(contractsTemplateDir, targetDir, {
@@ -80,7 +79,6 @@ export async function scaffold(options: ScaffoldOptions) {
       });
     }
 
-    // Add scripts to package.json
     const pkgJsonPath = path.join(targetDir, "package.json");
     if (await fs.pathExists(pkgJsonPath)) {
       const pkgJson = await fs.readJson(pkgJsonPath);
@@ -90,7 +88,6 @@ export async function scaffold(options: ScaffoldOptions) {
       await fs.writeJson(pkgJsonPath, pkgJson, { spaces: 2 });
     }
 
-    // Append env vars to .env.example
     const envExamplePath = path.join(targetDir, ".env.example");
     await fs.appendFile(
       envExamplePath,
@@ -98,7 +95,6 @@ export async function scaffold(options: ScaffoldOptions) {
     );
   }
 
-  // --- TEMPLATE SUBSTITUTION LOGIC ---
   const replaceInFile = async (
     filePath: string,
     replacements: Record<string, string>
@@ -136,9 +132,9 @@ export async function scaffold(options: ScaffoldOptions) {
     "{{TIMESTAMP}}": new Date().toISOString(),
   };
 
-  // Files to update
   const filesToProcess = [
     path.join(targetDir, "package.json"),
+    path.join(targetDir, "README.md"),
     path.join(targetDir, "src/contexts/WalletProvider.tsx"),
     path.join(targetDir, "src/contexts/WalletProvider.jsx"),
     path.join(targetDir, "src/lib/stellar-wallet-kit.ts"),
@@ -157,7 +153,6 @@ export async function scaffold(options: ScaffoldOptions) {
 
   console.log(`✔️  Scaffolded "${appName}" from template.`);
 
-  // Run installation
   const result = await runInstall({
     cwd: targetDir,
     skipInstall,

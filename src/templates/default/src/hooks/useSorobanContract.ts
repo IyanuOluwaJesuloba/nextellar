@@ -23,8 +23,8 @@ export interface SorobanContractOptions {
  * Return type for the useSorobanContract hook
  */
 export interface SorobanContractReturn {
-  callFunction: (name: string, args: unknown[]) => Promise<unknown>;
-  buildInvokeXDR: (name: string, args: unknown[]) => Promise<string>;
+  callFunction: (name: string, args: TypedArg[]) => Promise<unknown>;
+  buildInvokeXDR: (name: string, args: TypedArg[]) => Promise<string>;
   submitInvokeWithSecret: (
     xdr: string,
     secret: string
@@ -34,42 +34,168 @@ export interface SorobanContractReturn {
 }
 
 /**
- * Custom React hook for interacting with Soroban smart contracts
+ * Supported Soroban type hints for disambiguation.
  *
- * This hook provides a safe and typed abstraction to call contract functions
- * and build invoke transactions for submission. It supports read-only queries
- * via simulateTransaction and transaction building for contract invocations.
+ * | hint         | JS input                            | JS output       |
+ * |--------------|-------------------------------------|-----------------|
+ * | `"u32"`      | `number`                            | `number`        |
+ * | `"i32"`      | `number`                            | `number`        |
+ * | `"u64"`      | `number \| bigint`                  | `bigint`        |
+ * | `"i64"`      | `number \| bigint`                  | `bigint`        |
+ * | `"u128"`     | `bigint \| string`                  | `bigint`        |
+ * | `"i128"`     | `bigint \| string`                  | `bigint`        |
+ * | `"bool"`     | `boolean`                           | `boolean`       |
+ * | `"string"`   | `string`                            | `string`        |
+ * | `"symbol"`   | `string`                            | `string`        |
+ * | `"address"`  | `string` (G… or C…)                 | `string`        |
+ * | `"bytes"`    | `Uint8Array \| hex string`          | `Uint8Array`    |
+ * | `"vec"`      | `TypedArg[]`                        | `unknown[]`     |
+ * | `"map"`      | `[TypedArg, TypedArg][]`            | `Map<K,V>`      |
+ * | `"enum"`     | `{ tag: string; values?: TypedArg[] }` | `{ tag: string; values: unknown[] }` |
+ * | `"timepoint"`| `number` (unix seconds)             | `number`        |
+ * | `"duration"` | `number` (seconds)                  | `number`        |
+ */
+export type SorobanTypeHint =
+  | "u32" | "i32"
+  | "u64" | "i64"
+  | "u128" | "i128"
+  | "bool"
+  | "string" | "symbol"
+  | "address"
+  | "bytes"
+  | "vec"
+  | "map"
+  | "enum"
+  | "timepoint"
+  | "duration";
+
+/**
+ * A value passed to contract functions.
+ * Can be a plain JS value (auto-detected) or a tagged object for disambiguation.
+ *
+ * @example
+ * // Auto-detected string
+ * "hello"
+ *
+ * // Explicit u128 from BigInt
+ * { value: 1_000_000n, type: "u128" }
+ *
+ * // Bytes from hex string
+ * { value: "deadbeef", type: "bytes" }
+ *
+ * // Enum variant with a value
+ * { value: { tag: "Transfer", values: [{ value: 500n, type: "u128" }] }, type: "enum" }
+ *
+ * // Map from tuple array
+ * { value: [["key", "val"]], type: "map" }
+ */
+export type TypedArg =
+  | { value: unknown; type: SorobanTypeHint }
+  | string
+  | number
+  | bigint
+  | boolean
+  | Uint8Array
+  | null
+  | undefined;
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+const MASK64 = BigInt("0xFFFFFFFFFFFFFFFF");
+const SHIFT64 = BigInt(64);
+const ZERO = BigInt(0);
+
+/**
+ * Convert a BigInt to the hi/lo Uint64/Int64 pair needed by XDR 128-bit parts.
+ * UInt128Parts expects { hi: Uint64, lo: Uint64 }.
+ * Int128Parts expects  { hi: Int64,  lo: Uint64 }.
+ */
+function bigintToU128Parts(n: bigint): { hi: xdr.Uint64; lo: xdr.Uint64 } {
+  const hi = n >> SHIFT64;
+  const lo = n & MASK64;
+  return {
+    hi: xdr.Uint64.fromString(String(hi < ZERO ? hi + (MASK64 + BigInt(1)) : hi)),
+    lo: xdr.Uint64.fromString(String(lo)),
+  };
+}
+
+function bigintToI128Parts(n: bigint): { hi: xdr.Int64; lo: xdr.Uint64 } {
+  const hi = n >> SHIFT64;
+  const lo = n & MASK64;
+  return {
+    hi: xdr.Int64.fromString(String(hi)),
+    lo: xdr.Uint64.fromString(String(lo)),
+  };
+}
+
+/** Reconstruct a signed BigInt from Int128Parts hi/lo strings (as returned by SDK). */
+function hiLoToI128(hi: bigint, lo: bigint): bigint {
+  return (hi << SHIFT64) | (lo & MASK64);
+}
+
+/** Parse a hex string or Uint8Array to a Buffer suitable for xdr.ScVal.scvBytes. */
+function toBuffer(value: unknown): Buffer {
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  if (typeof value === "string") {
+    const clean = value.startsWith("0x") ? value.slice(2) : value;
+    return Buffer.from(clean, "hex");
+  }
+  throw new Error(`Cannot convert ${typeof value} to Bytes — expected Uint8Array or hex string`);
+}
+
+// ── Main hook ─────────────────────────────────────────────────────────────────
+
+/**
+ * Custom React hook for interacting with Soroban smart contracts.
+ *
+ * Provides a typed abstraction over Soroban XDR encoding/decoding so callers
+ * can work with plain JavaScript values. Supports read-only simulation via
+ * `callFunction` and transaction building via `buildInvokeXDR`.
+ *
+ * ### Supported type mappings
+ *
+ * | Soroban Type      | JavaScript Input                        | JavaScript Output              |
+ * |-------------------|-----------------------------------------|--------------------------------|
+ * | `u32`             | `number`                                | `number`                       |
+ * | `i32`             | `number`                                | `number`                       |
+ * | `u64`             | `number \| bigint`                      | `bigint`                       |
+ * | `i64`             | `number \| bigint`                      | `bigint`                       |
+ * | `u128`            | `bigint \| string`                      | `bigint`                       |
+ * | `i128`            | `bigint \| string`                      | `bigint`                       |
+ * | `bool`            | `boolean`                               | `boolean`                      |
+ * | `string`          | `string`                                | `string`                       |
+ * | `symbol`          | `string` (with `type: "symbol"`)        | `string`                       |
+ * | `address`         | `string` (G… or C…)                     | `string`                       |
+ * | `bytes / bytesN`  | `Uint8Array \| hex string`              | `Uint8Array`                   |
+ * | `vec`             | `TypedArg[]`                            | `unknown[]`                    |
+ * | `map`             | `[TypedArg, TypedArg][]` tuples         | `Map<unknown, unknown>`        |
+ * | `enum`            | `{ tag: string; values?: TypedArg[] }`  | `{ tag: string; values: any[] }` |
+ * | `timepoint`       | `number` (unix seconds)                 | `number`                       |
+ * | `duration`        | `number` (seconds)                      | `number`                       |
  *
  * @param opts - Configuration options including contractId, RPC URL, and network
  * @returns Object with contract interaction methods and state
  *
  * @example
  * ```tsx
- * function MyComponent() {
- *   const { callFunction, buildInvokeXDR, submitInvokeWithSecret, loading, error } =
- *     useSorobanContract({
- *       contractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQAHHXK3AWCM',
- *       network: 'TESTNET'
- *     });
+ * const { callFunction, loading, error } = useSorobanContract({
+ *   contractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQAHHXK3AWCM',
+ *   network: 'TESTNET',
+ * });
  *
- *   const handleReadContract = async () => {
- *     try {
- *       const result = await callFunction('get_balance', ['GABC...']);
- *       console.log('Contract result:', result);
- *     } catch (err) {
- *       console.error('Contract call failed:', err);
- *     }
- *   };
+ * // Call with explicit u128 (token amount)
+ * await callFunction('transfer', [
+ *   { value: 'GABC...', type: 'address' },
+ *   { value: 1_000_000n, type: 'u128' },
+ * ]);
  *
- *   return (
- *     <div>
- *       <button onClick={handleReadContract} disabled={loading}>
- *         Read Contract {loading && '(Loading...)'}
- *       </button>
- *       {error && <p>Error: {error.message}</p>}
- *     </div>
- *   );
- * }
+ * // Call with bytes (hash)
+ * await callFunction('verify', [{ value: 'deadbeef', type: 'bytes' }]);
+ *
+ * // Call with enum variant
+ * await callFunction('set_state', [
+ *   { value: { tag: 'Active', values: [] }, type: 'enum' },
+ * ]);
  * ```
  *
  * @security
@@ -89,109 +215,318 @@ export function useSorobanContract(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  // Get network passphrase based on network selection
   const networkPassphrase =
     network === "TESTNET" ? Networks.TESTNET : Networks.PUBLIC;
 
-  // Initialize Soroban RPC client using useMemo to prevent recreation on every render
   const rpcServer = useMemo(() => new rpc.Server(sorobanRpc), [sorobanRpc]);
 
+  // ── toXdrValue ─────────────────────────────────────────────────────────────
+
   /**
-   * Convert JavaScript values to Stellar XDR values for contract calls
+   * Convert a JavaScript value (optionally type-hinted) to a Soroban XDR ScVal.
+   *
+   * Auto-detection rules (when no `type` hint is given):
+   * - `boolean` → scvBool
+   * - `bigint` → scvI128
+   * - `number` (integer) → scvI32; otherwise falls back to string
+   * - `string` → scvString
+   * - `Uint8Array` → scvBytes
+   * - `Address` instance → scvAddress
+   * - `Array` → scvVec
+   * - plain `object` → scvMap (key/value pairs from entries)
+   * - anything else → scvString of String(value)
+   *
+   * Pass `{ value, type }` to disambiguate (e.g. `u128` vs `i32` for numbers,
+   * `symbol` vs `string` for strings, `bytes` for hex strings).
    */
-  const toXdrValue = useCallback((value: unknown): xdr.ScVal => {
-    if (typeof value === "string") {
-      return xdr.ScVal.scvString(value);
-    } else if (typeof value === "number") {
-      return xdr.ScVal.scvI32(value);
-    } else if (typeof value === "boolean") {
+  const toXdrValue = useCallback((arg: TypedArg): xdr.ScVal => {
+    // Unwrap typed hint
+    let value: unknown;
+    let hint: SorobanTypeHint | undefined;
+
+    if (
+      arg !== null &&
+      arg !== undefined &&
+      typeof arg === "object" &&
+      !(arg instanceof Uint8Array) &&
+      "value" in arg &&
+      "type" in arg
+    ) {
+      value = (arg as { value: unknown; type: SorobanTypeHint }).value;
+      hint = (arg as { value: unknown; type: SorobanTypeHint }).type;
+    } else {
+      value = arg;
+    }
+
+    // ── Explicit type hints ─────────────────────────────────────────────────
+
+    if (hint === "u32") {
+      return xdr.ScVal.scvU32(Number(value));
+    }
+
+    if (hint === "i32") {
+      return xdr.ScVal.scvI32(Number(value));
+    }
+
+    if (hint === "u64") {
+      return xdr.ScVal.scvU64(xdr.Uint64.fromString(String(BigInt(String(value)))));
+    }
+
+    if (hint === "i64") {
+      return xdr.ScVal.scvI64(xdr.Int64.fromString(String(BigInt(String(value)))));
+    }
+
+    if (hint === "u128") {
+      const n = typeof value === "string" ? BigInt(value) : (value as bigint);
+      return xdr.ScVal.scvU128(new xdr.UInt128Parts(bigintToU128Parts(n)));
+    }
+
+    if (hint === "i128") {
+      const n = typeof value === "string" ? BigInt(value) : (value as bigint);
+      return xdr.ScVal.scvI128(new xdr.Int128Parts(bigintToI128Parts(n)));
+    }
+
+    if (hint === "bool") {
+      return xdr.ScVal.scvBool(Boolean(value));
+    }
+
+    if (hint === "string") {
+      return xdr.ScVal.scvString(String(value));
+    }
+
+    if (hint === "symbol") {
+      return xdr.ScVal.scvSymbol(String(value));
+    }
+
+    if (hint === "address") {
+      return new Address(String(value)).toScVal();
+    }
+
+    if (hint === "bytes") {
+      return xdr.ScVal.scvBytes(toBuffer(value));
+    }
+
+    if (hint === "timepoint") {
+      return xdr.ScVal.scvTimepoint(xdr.Uint64.fromString(String(value)));
+    }
+
+    if (hint === "duration") {
+      return xdr.ScVal.scvDuration(xdr.Uint64.fromString(String(value)));
+    }
+
+    if (hint === "vec") {
+      const arr = value as TypedArg[];
+      return xdr.ScVal.scvVec(arr.map(toXdrValue));
+    }
+
+    if (hint === "map") {
+      // Accepts [TypedArg, TypedArg][] tuples
+      const tuples = value as [TypedArg, TypedArg][];
+      const entries = tuples.map(
+        ([k, v]) =>
+          new xdr.ScMapEntry({ key: toXdrValue(k), val: toXdrValue(v) })
+      );
+      return xdr.ScVal.scvMap(entries);
+    }
+
+    if (hint === "enum") {
+      // Soroban enums are encoded as a vec: [symbol(tag), ...values]
+      const { tag, values = [] } = value as {
+        tag: string;
+        values?: TypedArg[];
+      };
+      return xdr.ScVal.scvVec([
+        xdr.ScVal.scvSymbol(tag),
+        ...values.map(toXdrValue),
+      ]);
+    }
+
+    // ── Auto-detection (no hint) ────────────────────────────────────────────
+
+    if (typeof value === "boolean") {
       return xdr.ScVal.scvBool(value);
-    } else if (value instanceof Address) {
+    }
+
+    if (typeof value === "bigint") {
+      // Default bigint → i128
+      return xdr.ScVal.scvI128(new xdr.Int128Parts(bigintToI128Parts(value)));
+    }
+
+    if (typeof value === "number") {
+      return xdr.ScVal.scvI32(value);
+    }
+
+    if (typeof value === "string") {
+      // Stellar addresses auto-detected
+      if (
+        (value.startsWith("G") || value.startsWith("C")) &&
+        value.length === 56
+      ) {
+        return new Address(value).toScVal();
+      }
+      return xdr.ScVal.scvString(value);
+    }
+
+    if (value instanceof Uint8Array) {
+      return xdr.ScVal.scvBytes(Buffer.from(value) as Buffer);
+    }
+
+    if (value instanceof Address) {
       return value.toScVal();
-    } else if (value && typeof value === "object" && "_address" in value) {
-      // Handle Address objects
+    }
+
+    if (value && typeof value === "object" && "_address" in value) {
       return (value as unknown as { toScVal: () => xdr.ScVal }).toScVal();
-    } else if (Array.isArray(value)) {
+    }
+
+    if (Array.isArray(value)) {
       return xdr.ScVal.scvVec(value.map(toXdrValue));
-    } else if (value && typeof value === "object") {
-      // Handle objects by converting to map
-      const entries = Object.entries(value).map(
-        ([key, val]) =>
+    }
+
+    if (value && typeof value === "object") {
+      // Plain object → scvMap
+      const entries = Object.entries(value as Record<string, unknown>).map(
+        ([k, v]) =>
           new xdr.ScMapEntry({
-            key: toXdrValue(key),
-            val: toXdrValue(val),
+            key: toXdrValue(k),
+            val: toXdrValue(v as TypedArg),
           })
       );
       return xdr.ScVal.scvMap(entries);
     }
-    // Default to string representation
+
     return xdr.ScVal.scvString(String(value));
   }, []);
 
-  /**
-   * Convert Stellar XDR values back to JavaScript values
-   */
-  const fromXdrValue = useCallback((scVal: xdr.ScVal): unknown => {
-    switch (scVal.switch()) {
-      case xdr.ScValType.scvBool():
-        return scVal.b();
-      case xdr.ScValType.scvI32():
-        return scVal.i32();
-      case xdr.ScValType.scvI64():
-        return scVal.i64().toString();
-      case xdr.ScValType.scvU32():
-        return scVal.u32();
-      case xdr.ScValType.scvU64():
-        return scVal.u64().toString();
-      case xdr.ScValType.scvString():
-        return scVal.str().toString();
-      case xdr.ScValType.scvBytes():
-        return scVal.bytes();
-      case xdr.ScValType.scvVec():
-        return scVal.vec()?.map(fromXdrValue) || [];
-      case xdr.ScValType.scvMap():
-        const map = scVal.map();
-        const result: Record<string, unknown> = {};
-        if (map) {
-          for (let i = 0; i < map.length; i++) {
-            const entry = map[i];
-            const key = fromXdrValue(entry.key());
-            const val = fromXdrValue(entry.val());
-            result[String(key)] = val;
-          }
-        }
-        return result;
-      case xdr.ScValType.scvAddress():
-        return scVal.address().toString();
-      default:
-        return scVal.toString();
-    }
-  }, []);
+  // ── fromXdrValue ───────────────────────────────────────────────────────────
 
   /**
-   * Call a contract function in read-only mode (simulate)
-   * This method uses the Soroban RPC simulateTransaction endpoint to execute
-   * contract functions without submitting transactions to the network.
+   * Decode a Soroban XDR ScVal back to a JavaScript value.
    *
-   * @param name - The name of the contract function to call
-   * @param args - Array of arguments to pass to the function
-   * @returns Promise resolving to the function result
+   * | ScVal type    | Returned JS value                                     |
+   * |---------------|-------------------------------------------------------|
+   * | scvBool       | `boolean`                                             |
+   * | scvU32        | `number`                                              |
+   * | scvI32        | `number`                                              |
+   * | scvU64        | `bigint`                                              |
+   * | scvI64        | `bigint`                                              |
+   * | scvU128       | `bigint`                                              |
+   * | scvI128       | `bigint`                                              |
+   * | scvString     | `string`                                              |
+   * | scvSymbol     | `string`                                              |
+   * | scvBytes      | `Uint8Array`                                          |
+   * | scvAddress    | `string` (Stellar address)                            |
+   * | scvVec        | `unknown[]` (enum heuristic: `{ tag, values }`)       |
+   * | scvMap        | `Map<unknown, unknown>`                               |
+   * | scvTimepoint  | `number` (unix seconds)                               |
+   * | scvDuration   | `number` (seconds)                                    |
+   * | scvVoid       | `null`                                                |
+   * | other         | raw `.toString()` of the XDR value                   |
+   */
+  const fromXdrValue = useCallback((scVal: xdr.ScVal): unknown => {
+    const type = scVal.switch();
+
+    if (type === xdr.ScValType.scvBool()) return scVal.b();
+    if (type === xdr.ScValType.scvVoid()) return null;
+    if (type === xdr.ScValType.scvU32()) return scVal.u32();
+    if (type === xdr.ScValType.scvI32()) return scVal.i32();
+
+    if (type === xdr.ScValType.scvU64()) {
+      return BigInt(scVal.u64().toString());
+    }
+    if (type === xdr.ScValType.scvI64()) {
+      return BigInt(scVal.i64().toString());
+    }
+
+    if (type === xdr.ScValType.scvU128()) {
+      const parts = scVal.u128();
+      const hi = BigInt(parts.hi().toString());
+      const lo = BigInt(parts.lo().toString());
+      return (hi << SHIFT64) | lo;
+    }
+
+    if (type === xdr.ScValType.scvI128()) {
+      const parts = scVal.i128();
+      const hi = BigInt(parts.hi().toString());
+      const lo = BigInt(parts.lo().toString());
+      return hiLoToI128(hi, lo);
+    }
+
+    if (type === xdr.ScValType.scvString()) {
+      return scVal.str().toString();
+    }
+
+    if (type === xdr.ScValType.scvSymbol()) {
+      return scVal.sym().toString();
+    }
+
+    if (type === xdr.ScValType.scvBytes()) {
+      return new Uint8Array(scVal.bytes());
+    }
+
+    if (type === xdr.ScValType.scvAddress()) {
+      return scVal.address().toString();
+    }
+
+    if (type === xdr.ScValType.scvTimepoint()) {
+      return Number(scVal.timepoint().toString());
+    }
+
+    if (type === xdr.ScValType.scvDuration()) {
+      return Number(scVal.duration().toString());
+    }
+
+    if (type === xdr.ScValType.scvVec()) {
+      const vec = scVal.vec() ?? [];
+      const decoded = vec.map(fromXdrValue);
+
+      // Heuristic: if the first element is a symbol, treat as Soroban enum
+      if (
+        vec.length >= 1 &&
+        vec[0].switch() === xdr.ScValType.scvSymbol()
+      ) {
+        return {
+          tag: vec[0].sym().toString(),
+          values: decoded.slice(1),
+        };
+      }
+
+      return decoded;
+    }
+
+    if (type === xdr.ScValType.scvMap()) {
+      const entries = scVal.map() ?? [];
+      const map = new Map<unknown, unknown>();
+      for (const entry of entries) {
+        map.set(fromXdrValue(entry.key()), fromXdrValue(entry.val()));
+      }
+      return map;
+    }
+
+    return scVal.toString();
+  }, []);
+
+  // ── callFunction ───────────────────────────────────────────────────────────
+
+  /**
+   * Call a contract function in read-only (simulate) mode.
+   *
+   * @param name - Contract function name
+   * @param args - Arguments; each may be a plain JS value or `{ value, type }` for disambiguation
+   * @returns Decoded return value
    */
   const callFunction = useCallback(
-    async (name: string, args: unknown[] = []): Promise<unknown> => {
+    async (name: string, args: TypedArg[] = []): Promise<unknown> => {
       setLoading(true);
       setError(null);
 
       try {
-        // Create a dummy account for simulation (doesn't need to exist)
         const dummyKeypair = Keypair.random();
         const dummyAccount = new Account(dummyKeypair.publicKey(), "0");
 
-        // Build the contract invocation operation
         const contract = new Contract(contractId);
         const operation = contract.call(name, ...args.map(toXdrValue));
 
-        // Build transaction for simulation
         const txBuilder = new TransactionBuilder(dummyAccount, {
           fee: "100",
           networkPassphrase,
@@ -200,15 +535,12 @@ export function useSorobanContract(
           .setTimeout(30);
 
         const transaction = txBuilder.build();
-
-        // Simulate the transaction
         const simulation = await rpcServer.simulateTransaction(transaction);
 
         if ("error" in simulation && simulation.error) {
           throw new Error(`Simulation failed: ${simulation.error}`);
         }
 
-        // Extract and convert the result
         if ("result" in simulation && simulation.result?.retval) {
           return fromXdrValue(simulation.result.retval);
         }
@@ -225,29 +557,27 @@ export function useSorobanContract(
     [contractId, networkPassphrase, rpcServer, toXdrValue, fromXdrValue]
   );
 
+  // ── buildInvokeXDR ─────────────────────────────────────────────────────────
+
   /**
-   * Build an unsigned contract invocation XDR
-   * This method creates a transaction XDR that can be signed and submitted later.
+   * Build an unsigned contract invocation XDR for later signing and submission.
    *
-   * @param name - The name of the contract function to invoke
-   * @param args - Array of arguments to pass to the function
-   * @returns Promise resolving to the unsigned XDR string
+   * @param name - Contract function name
+   * @param args - Arguments; each may be a plain JS value or `{ value, type }` for disambiguation
+   * @returns Unsigned XDR string
    */
   const buildInvokeXDR = useCallback(
-    async (name: string, args: unknown[] = []): Promise<string> => {
+    async (name: string, args: TypedArg[] = []): Promise<string> => {
       setLoading(true);
       setError(null);
 
       try {
-        // Create a dummy account for building (will be replaced by actual signer)
         const dummyKeypair = Keypair.random();
         const dummyAccount = new Account(dummyKeypair.publicKey(), "0");
 
-        // Build the contract invocation operation
         const contract = new Contract(contractId);
         const operation = contract.call(name, ...args.map(toXdrValue));
 
-        // Build transaction
         const txBuilder = new TransactionBuilder(dummyAccount, {
           fee: "100",
           networkPassphrase,
@@ -255,9 +585,7 @@ export function useSorobanContract(
           .addOperation(operation)
           .setTimeout(30);
 
-        const transaction = txBuilder.build();
-
-        return transaction.toXDR();
+        return txBuilder.build().toXDR();
       } catch (err) {
         const error = err as Error;
         setError(error);
@@ -269,8 +597,10 @@ export function useSorobanContract(
     [contractId, networkPassphrase, toXdrValue]
   );
 
+  // ── submitInvokeWithSecret ─────────────────────────────────────────────────
+
   /**
-   * Submit a signed contract invocation transaction
+   * Submit a signed contract invocation transaction.
    *
    * ⚠️ SECURITY WARNING: This method is for DEVELOPMENT ONLY.
    * Never use this in production with real secret keys. Always use a secure
@@ -278,7 +608,7 @@ export function useSorobanContract(
    *
    * @param xdr - The signed transaction XDR
    * @param secret - The secret key for signing (DEV-ONLY)
-   * @returns Promise resolving to the transaction result
+   * @returns Transaction result
    */
   const submitInvokeWithSecret = useCallback(
     async (
@@ -289,17 +619,10 @@ export function useSorobanContract(
       setError(null);
 
       try {
-        // Parse the transaction from XDR
         const transaction = TransactionBuilder.fromXDR(xdr, networkPassphrase);
-
-        // Sign with the provided secret key (DEV-ONLY)
         const keypair = Keypair.fromSecret(secret);
         transaction.sign(keypair);
-
-        // Submit the transaction
-        const result = await rpcServer.sendTransaction(transaction);
-
-        return result;
+        return await rpcServer.sendTransaction(transaction);
       } catch (err) {
         const error = err as Error;
         setError(error);

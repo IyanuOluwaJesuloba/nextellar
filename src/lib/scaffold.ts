@@ -117,10 +117,23 @@ export async function scaffold(options: ScaffoldOptions) {
     "{{SOROBAN_URL}}": sorobanUrl || "https://soroban-testnet.stellar.org",
     "{{NETWORK}}":
       horizonUrl && horizonUrl.includes("public") ? "PUBLIC" : "TESTNET",
-    "{{WALLETS}}":
+    '["freighter", "albedo", "lobstr"]':
       wallets && wallets.length > 0
         ? JSON.stringify(wallets)
         : JSON.stringify(["freighter", "albedo", "lobstr"]),
+    "{{NEXTELLAR_VERSION}}": (() => {
+      try {
+        const pkgPath = fs.existsSync(path.resolve(__dirname, "../../package.json"))
+          ? path.resolve(__dirname, "../../package.json")
+          : path.resolve(__dirname, "../../../package.json");
+        const myPkg = fs.readJsonSync(pkgPath);
+        return myPkg.version || "0.0.0";
+      } catch {
+        return "0.0.0";
+      }
+    })(),
+    "{{TEMPLATE_NAME}}": templateName,
+    "{{TIMESTAMP}}": new Date().toISOString(),
   };
 
   // Files to update
@@ -133,6 +146,7 @@ export async function scaffold(options: ScaffoldOptions) {
     path.join(targetDir, "src/hooks/useSorobanContract.ts"),
     path.join(targetDir, "src/hooks/useSorobanContract.js"),
     path.join(targetDir, ".env.example"),
+    path.join(targetDir, ".nextellar/config.json"),
   ];
 
   for (const filePath of filesToProcess) {

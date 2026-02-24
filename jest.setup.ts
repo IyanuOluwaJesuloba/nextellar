@@ -26,17 +26,22 @@ class BroadcastChannel {
 }
 Object.assign(global, { BroadcastChannel });
 
-// 3) Setup fetch polyfill (commented out to avoid TextEncoder issues)
-// import { Headers, Request, Response, fetch } from 'undici';
-// Object.assign(globalThis, { Headers, Request, Response, fetch });
-
-// 4) Polyfill Web Streams API
+// 3) Polyfill Web Streams API (required before undici import)
 import {
   ReadableStream,
   WritableStream,
   TransformStream,
 } from 'web-streams-polyfill';
 Object.assign(global, { ReadableStream, WritableStream, TransformStream });
+
+// 4) Setup fetch polyfill for MSW and networked tests
+const undici = await import('undici');
+Object.assign(globalThis, {
+  Headers: undici.Headers,
+  Request: undici.Request,
+  Response: undici.Response,
+  fetch: undici.fetch,
+});
 
 // 5) MSW Setup (optional - may not exist, commented out for ESM compatibility)
 // try {

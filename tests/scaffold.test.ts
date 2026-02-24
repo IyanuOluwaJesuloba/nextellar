@@ -1,7 +1,11 @@
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { scaffold } from '../src/lib/scaffold';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 jest.setTimeout(30000);
 
@@ -56,11 +60,11 @@ describe('scaffold integration', () => {
     const envExample = await fs.readFile(path.join(target, '.env.example'), 'utf8');
     expect(envExample).toContain('NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org');
     expect(envExample).toContain(`NEXT_PUBLIC_APP_NAME=${appName}`);
+    expect(envExample).toContain('NEXT_PUBLIC_NETWORK=TESTNET');
 
     // stellar-wallet-kit should have injected default wallets and NETWORK should be TESTNET
     const kitFile = await fs.readFile(path.join(target, 'src/lib/stellar-wallet-kit.ts'), 'utf8');
     expect(kitFile).toContain('const INJECTED_WALLETS: string[] = ["freighter","albedo","lobstr"]');
-    expect(kitFile).toContain("'{{NETWORK}}' === 'PUBLIC' ? WalletNetwork.PUBLIC : WalletNetwork.TESTNET".replace("{{NETWORK}}","TESTNET"));
   });
 
   test('injects custom URLs and wallet list and sets NETWORK=PUBLIC when horizon contains public', async () => {

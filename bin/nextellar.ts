@@ -6,8 +6,17 @@ import fs from "fs-extra";
 import pc from "picocolors";
 import gradient from "gradient-string";
 import { scaffold } from "../src/lib/scaffold.js";
+import { upgrade } from "../src/lib/upgrade.js";
+import { runDeploy } from "../src/lib/deploy.js";
 import { displaySuccess, NEXTELLAR_LOGO } from "../src/lib/feedback.js";
 import { detectPackageManager } from "../src/lib/install.js";
+import {
+  getTelemetryStatus,
+  isTelemetryDisabledByEnv,
+  maybeShowTelemetryNotice,
+  setTelemetryEnabled,
+  telemetryConfigPath,
+} from "../src/lib/telemetry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +53,114 @@ program
       process.exit(exitCode);
     } catch (err: any) {
       console.error("Failed to run doctor:", err?.message || err);
+      process.exit(1);
+    }
+  });
+
+// Add subcommand: nextellar add <feature> | nextellar add --list
+program
+  .command("add [feature]")
+  .description("Add a Stellar feature to an existing Next.js project")
+  .option("--list", "show all available features")
+  .option("--force", "overwrite existing files")
+  .option("--skip-install", "skip installing npm dependencies")
+  .option("--package-manager <manager>", "npm, yarn, or pnpm")
+  .action(async (feature: string | undefined, cmdOpts: { list?: boolean; force?: boolean; skipInstall?: boolean; packageManager?: string }) => {
+    try {
+      const { runAdd } = await import("../src/lib/add.js");
+      const { listFeatures } = await import("../src/lib/features.js");
+      if (cmdOpts.list) {
+        const list = listFeatures();
+        console.log(pc.bold("Available features:\n"));
+        list.forEach(({ id, description }) => {
+          console.log(`  ${pc.cyan(id.padEnd(12))} ${pc.dim(description)}`);
+        });
+        console.log("");
+        return;
+      }
+      if (!feature || feature.trim() === "") {
+        console.error("Please specify a feature. Use " + pc.cyan("nextellar add --list") + " to see options.");
+        process.exit(1);
+      }
+      const result = await runAdd(feature, {
+        force: cmdOpts.force,
+        skipInstall: cmdOpts.skipInstall,
+        packageManager: cmdOpts.packageManager,
+      });
+      if (!result.success) {
+        console.error(result.message ?? "Add failed.");
+        process.exit(1);
+      }
+    } catch (err: any) {
+      console.error("Add failed:", err?.message || err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("telemetry <action>")
+  .description("Manage anonymous telemetry settings")
+  .action(async (action: string) => {
+    const normalized = action.toLowerCase();
+
+    if (normalized === "status") {
+      const status = await getTelemetryStatus();
+      console.log(`Telemetry is ${status}.`);
+      console.log(`Config: ${telemetryConfigPath}`);
+      if (isTelemetryDisabledByEnv()) {
+        console.log(
+          "NEXTELLAR_TELEMETRY_DISABLED is set, so telemetry is forced off for this environment."
+        );
+      }
+      return;
+    }
+
+    if (normalized === "disable") {
+      await setTelemetryEnabled(false);
+      console.log("Telemetry disabled.");
+      console.log(`Saved to: ${telemetryConfigPath}`);
+      return;
+    }
+
+    if (normalized === "enable") {
+      await setTelemetryEnabled(true);
+      console.log("Telemetry enabled.");
+      console.log(`Saved to: ${telemetryConfigPath}`);
+      return;
+    }
+
+    console.error(
+      `Unknown telemetry action \"${action}\". Use: status, enable, disable.`
+    );
+    process.exit(1);
+  });
+
+program
+  .command("upgrade")
+  .description("Upgrade an existing Nextellar project to the latest template files")
+  .option("--dry-run", "Show what would change without applying it", false)
+  .option("--yes", "Apply changes without prompting", false)
+  .action(async (options) => {
+    try {
+      await upgrade({ dryRun: options.dryRun, yes: options.yes });
+    } catch (err: any) {
+      console.error(`\n❌ Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("deploy")
+  .description("Validate and prepare a deployment bundle for Nextellar Cloud")
+  .option("--dry-run", "validate and show what would be deployed without bundling")
+  .action(async (cmdOpts: { dryRun?: boolean }) => {
+    try {
+      await runDeploy({
+        cwd: process.cwd(),
+        dryRun: !!cmdOpts.dryRun,
+      });
+    } catch (err: any) {
+      console.error(`\n❌ Error: ${err?.message || err}`);
       process.exit(1);
     }
   });
@@ -85,7 +202,8 @@ program
     "--install-timeout <ms>",
     "installation timeout in milliseconds",
     "1200000",
-  );
+  )
+  .option("--no-telemetry", "disable telemetry for this invocation");
 
 program.action(async (projectName, options) => {
   const template = options.template || "default";
@@ -115,6 +233,8 @@ program.action(async (projectName, options) => {
 
   const wallets = options.wallets ? options.wallets.split(",") : [];
   try {
+    await maybeShowTelemetryNotice({ noTelemetryFlag: options.telemetry === false });
+
     await scaffold({
       appName: projectName,
       useTs,
@@ -127,6 +247,8 @@ program.action(async (projectName, options) => {
       skipInstall: options.skipInstall,
       packageManager: options.packageManager,
       installTimeout: parseInt(options.installTimeout),
+      telemetryEnabled: options.telemetry,
+      cliVersion: pkg.version,
     });
 
     const pkgManager = detectPackageManager(

@@ -91,6 +91,9 @@ my-app/
 Full API reference, guides, and examples live at:  
 🔗 https://docs.nextellar.dev
 
+Telemetry and privacy details:  
+🔗 [docs/telemetry.md](docs/telemetry.md)
+
 ---
 
 ## 🤝 Contributing

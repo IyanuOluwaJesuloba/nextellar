@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useWallet } from '../contexts';
 
 // Simple inline SVG icons
@@ -30,77 +30,6 @@ interface WalletConnectButtonProps {
 export default function WalletConnectButton({ theme = 'light' }: WalletConnectButtonProps) {
   const { connected, connect, disconnect, walletName } = useWallet();
   const [isLoading, setIsLoading] = useState(false);
-
-  // Custom modal content replacer
-  useEffect(() => {
-    const replaceModalContent = () => {
-      // Look for modal elements and replace content
-      const modalElements = document.querySelectorAll('[class*="swk"], [class*="modal"]');
-      modalElements.forEach(modal => {
-        // Find and hide elements containing the unwanted text
-        const walker = document.createTreeWalker(
-          modal,
-          NodeFilter.SHOW_TEXT
-        );
-        
-        const textNodes = [];
-        let node;
-        while (node = walker.nextNode()) {
-          textNodes.push(node);
-        }
-        
-        textNodes.forEach(textNode => {
-          const text = textNode.textContent || '';
-          if (text.includes('Learn more') || 
-              text.includes('What is a Wallet') || 
-              text.includes('What is Stellar') ||
-              text.includes('Wallets are used to send') ||
-              text.includes('Stellar is a decentralized')) {
-            const parent = textNode.parentElement;
-            if (parent) {
-              parent.style.display = 'none';
-            }
-          }
-        });
-
-        // Add our custom message if not already added
-        if (!modal.querySelector('.custom-stellar-message')) {
-          const customMessage = document.createElement('div');
-          customMessage.className = 'custom-stellar-message';
-          customMessage.innerHTML = `
-            <div style="
-              padding: 16px;
-              margin: 16px 0;
-              background: var(--background, #fff);
-              color: var(--foreground, #000);
-              border-radius: 8px;
-              font-size: 14px;
-              line-height: 1.5;
-              border: 1px solid rgba(156, 163, 175, 0.3);
-            ">
-              ✨ The Stellar SDK has been integrated into this template. Use the reusable Connect Wallet button component in any project to connect to Freighter, Albedo, Lobstr, and other popular Stellar wallets.
-            </div>
-          `;
-          modal.appendChild(customMessage);
-        }
-      });
-    };
-
-    // Run immediately and also observe for new modals
-    const observer = new MutationObserver(() => {
-      setTimeout(replaceModalContent, 100);
-    });
-
-    observer.observe(document.body, { 
-      childList: true, 
-      subtree: true 
-    });
-
-    // Cleanup
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
 
   const handleClick = async () => {
     setIsLoading(true);

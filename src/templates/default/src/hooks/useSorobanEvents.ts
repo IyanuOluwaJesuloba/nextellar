@@ -25,7 +25,6 @@ export interface SorobanEvent {
   contractId: string;
   topic: string[];
   value: unknown;
-  pagingToken: string;
   txHash: string;
   inSuccessfulContractCall: boolean;
 }
@@ -87,7 +86,6 @@ function mapEvent(raw: rpc.Api.EventResponse): SorobanEvent {
     contractId: raw.contractId?.toString() ?? '',
     topic: raw.topic.map((t) => t.toXDR('base64')),
     value: raw.value.toXDR('base64'),
-    pagingToken: raw.pagingToken,
     txHash: raw.txHash,
     inSuccessfulContractCall: raw.inSuccessfulContractCall,
   };
@@ -170,17 +168,18 @@ export function useSorobanEvents(
   // ── Core fetch (no retry) ──────────────────────────────────────────────────
 
   const fetchOnce = useCallback(async (): Promise<void> => {
-    const response = await rpcServer.getEvents({
-      filters: [
-        {
-          type: 'contract',
-          contractIds: [contractId],
-          ...(topics && topics.length > 0 ? { topics } : {}),
-        },
-      ],
-      ...(cursorRef.current ? { cursor: cursorRef.current } : {}),
-      limit,
-    });
+    const filter = {
+      type: 'contract' as const,
+      contractIds: [contractId],
+      ...(topics && topics.length > 0 ? { topics } : {}),
+    };
+
+    // GetEventsRequest is a discriminated union: cursor mode xor startLedger mode.
+    const request = cursorRef.current
+      ? { filters: [filter], cursor: cursorRef.current, limit }
+      : { filters: [filter], startLedger: 1, limit };
+
+    const response = await rpcServer.getEvents(request);
 
     if (!isMountedRef.current) return;
 
@@ -191,8 +190,9 @@ export function useSorobanEvents(
       return [...prev, ...newEvents.filter((e) => !seen.has(e.id))];
     });
 
-    if (newEvents.length > 0) {
-      cursorRef.current = newEvents[newEvents.length - 1].pagingToken;
+    // Advance cursor using the response-level cursor for next page
+    if (response.cursor) {
+      cursorRef.current = response.cursor;
     }
   }, [contractId, rpcServer, topics, limit]);
 

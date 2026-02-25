@@ -10,6 +10,7 @@ import { upgrade } from "../src/lib/upgrade.js";
 import { runDeploy } from "../src/lib/deploy.js";
 import { displaySuccess, NEXTELLAR_LOGO } from "../src/lib/feedback.js";
 import { detectPackageManager } from "../src/lib/install.js";
+import { runInteractivePrompts } from "../src/lib/prompts.js";
 import {
   getTelemetryStatus,
   isTelemetryDisabledByEnv,
@@ -53,6 +54,46 @@ program
       process.exit(exitCode);
     } catch (err: any) {
       console.error("Failed to run doctor:", err?.message || err);
+      process.exit(1);
+    }
+  });
+
+// Add subcommand: nextellar add <feature> | nextellar add --list
+program
+  .command("add [feature]")
+  .description("Add a Stellar feature to an existing Next.js project")
+  .option("--list", "show all available features")
+  .option("--force", "overwrite existing files")
+  .option("--skip-install", "skip installing npm dependencies")
+  .option("--package-manager <manager>", "npm, yarn, or pnpm")
+  .action(async (feature: string | undefined, cmdOpts: { list?: boolean; force?: boolean; skipInstall?: boolean; packageManager?: string }) => {
+    try {
+      const { runAdd } = await import("../src/lib/add.js");
+      const { listFeatures } = await import("../src/lib/features.js");
+      if (cmdOpts.list) {
+        const list = listFeatures();
+        console.log(pc.bold("Available features:\n"));
+        list.forEach(({ id, description }) => {
+          console.log(`  ${pc.cyan(id.padEnd(12))} ${pc.dim(description)}`);
+        });
+        console.log("");
+        return;
+      }
+      if (!feature || feature.trim() === "") {
+        console.error("Please specify a feature. Use " + pc.cyan("nextellar add --list") + " to see options.");
+        process.exit(1);
+      }
+      const result = await runAdd(feature, {
+        force: cmdOpts.force,
+        skipInstall: cmdOpts.skipInstall,
+        packageManager: cmdOpts.packageManager,
+      });
+      if (!result.success) {
+        console.error(result.message ?? "Add failed.");
+        process.exit(1);
+      }
+    } catch (err: any) {
+      console.error("Add failed:", err?.message || err);
       process.exit(1);
     }
   });
@@ -170,6 +211,19 @@ program.action(async (projectName, options) => {
   const validTemplates = ["default", "minimal", "defi"];
   const useTs = options.typescript && !options.javascript;
 
+  const hasArg = (longFlag: string, shortFlag?: string) => {
+    const argv = process.argv;
+    return argv.includes(longFlag) || (shortFlag ? argv.includes(shortFlag) : false);
+  };
+
+  const splitWallets = (value: unknown): string[] => {
+    if (typeof value !== "string") return [];
+    return value
+      .split(",")
+      .map((w) => w.trim())
+      .filter(Boolean);
+  };
+
   if (!validTemplates.includes(template)) {
     console.error(
       `Unknown template "${template}". Available: default, minimal, defi`,
@@ -191,32 +245,88 @@ program.action(async (projectName, options) => {
     console.log(`  ${pc.magenta("◆")} Contracts: ${pc.cyan(options.withContracts ? "Yes" : "No")}\n`);
   }
 
-  const wallets = options.wallets ? options.wallets.split(",") : [];
+  const shouldPrompt =
+    !options.defaults &&
+    process.stdout.isTTY &&
+    process.stdin.isTTY &&
+    !process.env.CI;
+
+  const defaultWallets = ["freighter", "albedo", "lobstr"];
+  const walletsFlagProvided = hasArg("--wallets", "-w");
+  const networkFlagProvided =
+    hasArg("--horizon-url") || hasArg("--soroban-url");
+  const packageManagerFlagProvided = hasArg("--package-manager");
+  const skipInstallFlagProvided = hasArg("--skip-install");
+
+  let finalProjectName: string = projectName;
+  let finalHorizonUrl: string | undefined = options.horizonUrl;
+  let finalSorobanUrl: string | undefined = options.sorobanUrl;
+  let finalWallets: string[] = walletsFlagProvided
+    ? splitWallets(options.wallets)
+    : [];
+  let finalPackageManager: "npm" | "yarn" | "pnpm" | undefined = options
+    .packageManager;
+  let finalSkipInstall: boolean = options.skipInstall;
+
+  if (shouldPrompt) {
+    const promptResult = await runInteractivePrompts({
+      initialProjectName: projectName,
+      cwd: process.cwd(),
+      defaultWallets,
+      packageManagerFromFlag: options.packageManager,
+      networkFlagProvided,
+      walletsFlagProvided,
+      packageManagerFlagProvided,
+      skipInstallFlagProvided,
+    });
+
+    if (!promptResult) {
+      process.exit(0);
+    }
+
+    finalProjectName = promptResult.projectName;
+    if (!networkFlagProvided) {
+      finalHorizonUrl = promptResult.horizonUrl;
+      finalSorobanUrl = promptResult.sorobanUrl;
+    }
+    if (!walletsFlagProvided) {
+      finalWallets = promptResult.wallets ?? defaultWallets;
+    }
+    if (!packageManagerFlagProvided) {
+      finalPackageManager = promptResult.packageManager;
+    }
+    if (!skipInstallFlagProvided) {
+      finalSkipInstall = !!promptResult.skipInstall;
+    }
+  } else {
+    finalWallets = walletsFlagProvided ? finalWallets : defaultWallets;
+  }
+
   try {
     await maybeShowTelemetryNotice({ noTelemetryFlag: options.telemetry === false });
 
     await scaffold({
-      appName: projectName,
+      appName: finalProjectName,
       useTs,
       template,
       withContracts: options.withContracts,
-      horizonUrl: options.horizonUrl,
-      sorobanUrl: options.sorobanUrl,
-      wallets,
+      horizonUrl: finalHorizonUrl,
+      sorobanUrl: finalSorobanUrl,
+      wallets: finalWallets,
       defaults: options.defaults,
-      skipInstall: options.skipInstall,
-      packageManager: options.packageManager,
+      skipInstall: finalSkipInstall,
+      packageManager: finalPackageManager,
       installTimeout: parseInt(options.installTimeout),
       telemetryEnabled: options.telemetry,
       cliVersion: pkg.version,
     });
 
     const pkgManager = detectPackageManager(
-      path.join(process.cwd(), projectName),
-      options.packageManager,
+      path.join(process.cwd(), finalProjectName),
+      finalPackageManager,
     );
 
-    await displaySuccess(projectName, pkgManager, options.skipInstall);
+    await displaySuccess(finalProjectName, pkgManager, finalSkipInstall);
   } catch (err: any) {
     console.error(`\n❌ Error: ${err.message}`);
     process.exit(1);
